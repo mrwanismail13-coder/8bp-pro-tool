@@ -29,11 +29,10 @@ SCREEN_WIDTH = win32api.GetSystemMetrics(0)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(1)
 TRANSPARENT = (0, 0, 0)
 
-# 🎨 خريطة الألوان المفصولة لسهولة الرؤية
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 CYAN = (0, 255, 255)         # 🔵 خط الاستريت
-NEON_YELLOW = (255, 255, 0)  # 🟡 خط البند
+NEON_YELLOW = (255, 255, 0)  # 🟡 خط البند والمالتي
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 BLUE = (0, 162, 232)
@@ -62,7 +61,7 @@ line_thickness = 2
 is_3line_enabled = True       
 
 # ==========================================
-# 🧠 4. Memory Systems (White Auto + Target Lock)
+# 🧠 4. Memory Systems
 # ==========================================
 class PermanentWhiteBallMemory:
     def __init__(self):
@@ -73,6 +72,9 @@ class PermanentWhiteBallMemory:
             self.last_valid_pos = raw_white
             return raw_white
         return self.last_valid_pos
+
+    def manual_lock(self, x, y):
+        self.last_valid_pos = (x, y)
 
 class TargetBallManager:
     def __init__(self):
@@ -113,6 +115,7 @@ target_manager = TargetBallManager()
 selected_pocket = 0
 table_region = None
 last_lock_time = 0
+last_white_lock_time = 0
 last_hide_toggle_time = 0
 last_power_toggle_time = 0
 current_bank_side = None 
@@ -239,7 +242,7 @@ def find_precise_ball_center_near_mouse(table_img, mouse_table_x, mouse_table_y,
     
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     blur = cv2.medianBlur(cv2.equalizeHist(gray), 5)
-    circles = cv2.HoughCircles(blur, cv2.HOUGH_GRADIENT, dp=1.0, minDist=30, param1=50, param2=15, minRadius=12, maxRadius=20)
+    circles = cv2.HoughCircles(blur, cv2.HOUGH_GRADIENT, dp=1.0, minDist=30, param1=70, param2=22, minRadius=12, maxRadius=20)
     
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
@@ -282,7 +285,6 @@ while running:
     except Exception:
         mx, my = last_known_mx, last_known_my
 
-    # التحكم بقوة الارتداد عبر F3, F4, F5
     if keyboard.is_pressed("f3") and time.time() - last_power_toggle_time > 0.2:
         current_power = 50
         last_power_toggle_time = time.time()
@@ -366,7 +368,7 @@ while running:
     left_band, right_band = x + CUSHION_PADDING, x + w - CUSHION_PADDING
     table_bounds = (left_band, top_band, right_band, bottom_band)
 
-    # ⚪ [رجوع التتبع التلقائي للبيضاء] الكود هيلقطها لوحده دايماً في الخلفية
+    # ⚪ [التتبع التلقائي للبيضاء شغال دايماً في الخلفية]
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
         for (cx, cy, r) in circles:
@@ -377,6 +379,15 @@ while running:
             if is_strictly_white_ball(roi): 
                 raw_white_det = (cx_global, cy_global)
                 break
+
+    # ⚪ [رجوع زرار A السنترة اليدوية]: لو ضغطت A يجبر السنتر يقف تحت الماوس بالملي
+    if keyboard.is_pressed("a") and time.time() - last_white_lock_time > 0.15:
+        precise_white = find_precise_ball_center_near_mouse(table, mx - x, my - y)
+        if precise_white is not None:
+            white_memory.manual_lock(int(precise_white[0] + x), int(precise_white[1] + y))
+        else:
+            white_memory.manual_lock(mx, my)
+        last_white_lock_time = time.time()
 
     stable_white = white_memory.update(raw_white_det)
 
@@ -401,7 +412,6 @@ while running:
     if stable_target:
         pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS, BLUE)
 
-    # التبديل بين الحفر (من 1 لـ 6)
     for i in range(1, 7):
         if keyboard.is_pressed(str(i)): selected_pocket = i - 1
 
@@ -411,7 +421,6 @@ while running:
         txt = pocket_font.render(f"{idx+1}", True, WHITE if idx == selected_pocket else ORANGE)
         screen.blit(txt, (p[0] - 5, p[1] - 25 if idx < 3 else p[1] + 10))
 
-    # 🕹️ إدارة مفاتيح البند الثابتة في الذاكرة
     if keyboard.is_pressed("i"): current_bank_side = 'top'
     elif keyboard.is_pressed("m"): current_bank_side = 'bottom'
     elif keyboard.is_pressed("j"): current_bank_side = 'left'
@@ -419,32 +428,49 @@ while running:
     elif keyboard.is_pressed("e"): current_bank_side = None
 
     # ==========================================
-    # 🎯 9. [نظام المالتي الذكي بعد إزالة التكرار]
+    # 🎯 9. Core Engine (الاستريت + البند اليدوي + الـ Multi Detect)
     # ==========================================
     if stable_white and stable_target:
         current_pocket = pockets[selected_pocket]
-
-        # 🔵 في حالة اللعب المباشر (مفتاح البند مقفول) -> نرسم Ghost Ball الاستريت فقط
+        
+        # 🔵 أ) رسم خط الاستريت الأساسي (ثابت دائماً)
+        g_pos_straight = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
+        draw_custom_3lines(screen, stable_white, g_pos_straight, BALL_RADIUS, is_white_ball=True)
+        
+        # [حل الخطأ]: نرسم دايرة الـ Ghost Ball للاستريت فقط لو مش عارضين بند يدوي منعاً للتداخل
         if current_bank_side is None:
-            g_pos_straight = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
-            draw_custom_3lines(screen, stable_white, g_pos_straight, BALL_RADIUS, is_white_ball=True)
             pygame.gfxdraw.aacircle(screen, int(g_pos_straight[0]), int(g_pos_straight[1]), BALL_RADIUS, WHITE)
             draw_custom_3lines(screen, stable_target, current_pocket, BALL_RADIUS, is_white_ball=False, ball_color=CYAN)
-        
-        # 🟡 في حالة تفعيل البند -> [حل الخطأ]: نمسح دايرة الاستريت ونرسم دايرة البند فقط لمنع التداخل!
-        else:
+
+        # 🟡 ب) نظام البند اليدوي المستقر (عند اختيار جدار محدد بـ i, m, j, k)
+        if current_bank_side is not None:
             bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, current_bank_side, current_power)
             if bank_point:
                 g_pos_bank = ghost_ball(stable_target, bank_point, BALL_RADIUS)
                 
-                # خط البيضاء التخيلي رايح لـ Ghost Ball البند
+                # إظهار دايرة الـ Ghost ball المخصصة للبند فقط في مكانها الصحيح
+                pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE)
                 draw_custom_3lines(screen, stable_white, g_pos_bank, BALL_RADIUS, is_white_ball=True)
-                pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE) # دايرة واحدة فقط!
                 
-                # خط الهدف إلى الجدار ومن الجدار للحفرة (Neon Yellow)
+                # رسم خطوط البند اليدوي
                 draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=NEON_YELLOW)
                 pygame.draw.line(screen, NEON_YELLOW, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
                 pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
+        
+        # 💥 ج) [رجوع نظام المالتي الذكي كاملاً بدون زحمة الدوائر المتداخلة]
+        else:
+            for side in ['top', 'bottom', 'left', 'right']:
+                for p_idx, p_coord in enumerate(pockets):
+                    # تخطي الحفرة النشطة حالياً علشان خط الاستريت بتاعها واضح
+                    if p_idx == selected_pocket: continue 
+                    
+                    b_pt = calculate_manual_bank_point(stable_target, p_coord, table_bounds, side, current_power)
+                    if b_pt:
+                        # رسم خطوط المسار بالكامل (من الهدف للجدار ومن الجدار للحفرة) بلون أصفر خفيف
+                        # [تنظيف]: بدون رسم أي دوائر Ghost ball هنا حتى لا تتداخل الدوائر نهائياً!
+                        pygame.draw.line(screen, NEON_YELLOW, (int(stable_target[0]), int(stable_target[1])), (int(b_pt[0]), int(b_pt[1])), 1)
+                        pygame.draw.line(screen, NEON_YELLOW, (int(b_pt[0]), int(b_pt[1])), p_coord, 1)
+                        pygame.gfxdraw.filled_circle(screen, int(b_pt[0]), int(b_pt[1]), 2, NEON_YELLOW)
 
     # ==========================================
     # 🖼️ 10. Rendering GUI Panel
