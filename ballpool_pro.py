@@ -31,7 +31,7 @@ TRANSPARENT = (0, 0, 0)
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
-CYAN = (0, 255, 255)         # 🔵 خط الاستريت
+CYAN = (0, 255, 255)         # 🔵 خط الاستريت المحدد
 NEON_YELLOW = (255, 255, 0)  # 🟡 خط البند والمالتي
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -48,7 +48,7 @@ last_known_my = SCREEN_HEIGHT // 2
 # 🎛️ 3. GUI Menu State & Controls
 # ==========================================
 gui_x, gui_y = 50, 50       
-gui_w, gui_h = 240, 280       
+gui_w, gui_h = 240, 320       # زودنا الارتفاع علشان الزرار الجديد
 is_dragging = False          
 drag_offset_x = 0
 drag_offset_y = 0
@@ -59,6 +59,7 @@ is_hidden = False
 current_power = 100           
 line_thickness = 2            
 is_3line_enabled = True       
+is_multi_enabled = True       # التحكم في تشغيل/إطفاء المالتي ديفكت
 
 # ==========================================
 # 🧠 4. Memory Systems
@@ -118,6 +119,7 @@ last_lock_time = 0
 last_white_lock_time = 0
 last_hide_toggle_time = 0
 last_power_toggle_time = 0
+last_multi_toggle_time = 0
 current_bank_side = None 
 
 # ==========================================
@@ -222,7 +224,7 @@ def is_strictly_white_ball(roi):
     center_edges = edges[int(h*0.3):int(h*0.7), int(w*0.3):int(w*0.7)]
     if np.sum(center_edges > 0) > 12: return False 
 
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2Transition) if 'BGR2Transition' in dir(cv2) else cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     center_hsv = hsv[int(h*0.3):int(h*0.7), int(w*0.3):int(w*0.7)]
     lower_white = np.array([0, 0, 180]) 
     upper_white = np.array([180, 40, 255])
@@ -285,6 +287,7 @@ while running:
     except Exception:
         mx, my = last_known_mx, last_known_my
 
+    # التحكم بالاختصارات السريعة لسرعة الاستجابة
     if keyboard.is_pressed("f3") and time.time() - last_power_toggle_time > 0.2:
         current_power = 50
         last_power_toggle_time = time.time()
@@ -294,6 +297,11 @@ while running:
     elif keyboard.is_pressed("f5") and time.time() - last_power_toggle_time > 0.2:
         current_power = 100
         last_power_toggle_time = time.time()
+
+    # اختصار الكيبورد حرف C لتبديل حالة المالتي بسرعة
+    if keyboard.is_pressed("c") and time.time() - last_multi_toggle_time > 0.2:
+        is_multi_enabled = not is_multi_enabled
+        last_multi_toggle_time = time.time()
 
     if keyboard.is_pressed("ctrl+h") and time.time() - last_hide_toggle_time > 0.3:
         is_hidden = not is_hidden
@@ -319,10 +327,12 @@ while running:
                 elif (gui_x + 85 <= mx <= gui_x + 150) and (gui_y + 45 <= my <= gui_y + 70): current_power = 75
                 elif (gui_x + 155 <= mx <= gui_x + 220) and (gui_y + 45 <= my <= gui_y + 70): current_power = 100
                 elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 85 <= my <= gui_y + 110): is_3line_enabled = not is_3line_enabled
-                elif (gui_x + 140 <= mx <= gui_x + 175) and (gui_y + 125 <= my <= gui_y + 150): line_thickness = max(1, line_thickness - 1)
-                elif (gui_x + 185 <= mx <= gui_x + 220) and (gui_y + 125 <= my <= gui_y + 150): line_thickness = min(6, line_thickness + 1)
-                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 190 <= my <= gui_y + 220): is_hidden = True
-                elif (gui_x + 15 <= mx <= gui_x + 290) and (gui_y + 230 <= my <= gui_y + 260): running = False
+                # نقرة زرار المالتي الجديد في القائمة
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 125 <= my <= gui_y + 150): is_multi_enabled = not is_multi_enabled
+                elif (gui_x + 140 <= mx <= gui_x + 175) and (gui_y + 165 <= my <= gui_y + 190): line_thickness = max(1, line_thickness - 1)
+                elif (gui_x + 185 <= mx <= gui_x + 220) and (gui_y + 165 <= my <= gui_y + 190): line_thickness = min(6, line_thickness + 1)
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 230 <= my <= gui_y + 260): is_hidden = True
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 270 <= my <= gui_y + 300): running = False
                 else:
                     is_dragging = True
                     drag_offset_x = mx - gui_x
@@ -368,7 +378,7 @@ while running:
     left_band, right_band = x + CUSHION_PADDING, x + w - CUSHION_PADDING
     table_bounds = (left_band, top_band, right_band, bottom_band)
 
-    # ⚪ [التتبع التلقائي للبيضاء شغال دايماً في الخلفية]
+    # ⚪ 1. [التتبع التلقائي للبيضاء شغال دايماً في الخلفية]
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
         for (cx, cy, r) in circles:
@@ -380,7 +390,7 @@ while running:
                 raw_white_det = (cx_global, cy_global)
                 break
 
-    # ⚪ [رجوع زرار A السنترة اليدوية]: لو ضغطت A يجبر السنتر يقف تحت الماوس بالملي
+    # ⚪ 2. [رجوع زرار A بالكامل]: لو ضغطته بيجبر السنتر يقف على مكان الماوس يدوياً فوراً وينقذ التتبع
     if keyboard.is_pressed("a") and time.time() - last_white_lock_time > 0.15:
         precise_white = find_precise_ball_center_near_mouse(table, mx - x, my - y)
         if precise_white is not None:
@@ -428,81 +438,88 @@ while running:
     elif keyboard.is_pressed("e"): current_bank_side = None
 
     # ==========================================
-    # 🎯 9. Core Engine (الاستريت + البند اليدوي + الـ Multi Detect)
+    # 🎯 9. Core Engine (الاستريت + البند اليدوي + المالتي بندات المصلح)
     # ==========================================
     if stable_white and stable_target:
         current_pocket = pockets[selected_pocket]
         
-        # 🔵 أ) رسم خط الاستريت الأساسي (ثابت دائماً)
+        # 🔵 أ) خط الاستريت الأساسي الثابت والمحدد دايماً
         g_pos_straight = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
         draw_custom_3lines(screen, stable_white, g_pos_straight, BALL_RADIUS, is_white_ball=True)
         
-        # [حل الخطأ]: نرسم دايرة الـ Ghost Ball للاستريت فقط لو مش عارضين بند يدوي منعاً للتداخل
         if current_bank_side is None:
             pygame.gfxdraw.aacircle(screen, int(g_pos_straight[0]), int(g_pos_straight[1]), BALL_RADIUS, WHITE)
             draw_custom_3lines(screen, stable_target, current_pocket, BALL_RADIUS, is_white_ball=False, ball_color=CYAN)
 
-        # 🟡 ب) نظام البند اليدوي المستقر (عند اختيار جدار محدد بـ i, m, j, k)
+        # 🟡 ب) في حالة البند اليدوي (i, m, j, k) -> يمسح خطوط المالتي ويقفل على بند واحد نظيف بـ Ghost Ball واحدة
         if current_bank_side is not None:
             bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, current_bank_side, current_power)
             if bank_point:
                 g_pos_bank = ghost_ball(stable_target, bank_point, BALL_RADIUS)
                 
-                # إظهار دايرة الـ Ghost ball المخصصة للبند فقط في مكانها الصحيح
                 pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE)
                 draw_custom_3lines(screen, stable_white, g_pos_bank, BALL_RADIUS, is_white_ball=True)
                 
-                # رسم خطوط البند اليدوي
                 draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=NEON_YELLOW)
                 pygame.draw.line(screen, NEON_YELLOW, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
                 pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
         
-        # 💥 ج) [رجوع نظام المالتي الذكي كاملاً بدون زحمة الدوائر المتداخلة]
-        else:
+        # 💥 ج) [نظام المالتي بندات فقط - بدون أي خطوط استريت عشوائية وبدون تداخل الدوائر]
+        elif is_multi_enabled:
             for side in ['top', 'bottom', 'left', 'right']:
                 for p_idx, p_coord in enumerate(pockets):
-                    # تخطي الحفرة النشطة حالياً علشان خط الاستريت بتاعها واضح
+                    # لو دي الحفرة المحددة للاستريت، بنتجاهل خط البند بتاعها هنا علشان الشاشة متزحمش
                     if p_idx == selected_pocket: continue 
                     
                     b_pt = calculate_manual_bank_point(stable_target, p_coord, table_bounds, side, current_power)
                     if b_pt:
-                        # رسم خطوط المسار بالكامل (من الهدف للجدار ومن الجدار للحفرة) بلون أصفر خفيف
-                        # [تنظيف]: بدون رسم أي دوائر Ghost ball هنا حتى لا تتداخل الدوائر نهائياً!
+                        # [تعديل]: رسم خطوط بندات (ارتدادات) فقط من الهدف للجدار ومن الجدار للحفرة وبدون أي خطوط مستقيمة عشوائية
                         pygame.draw.line(screen, NEON_YELLOW, (int(stable_target[0]), int(stable_target[1])), (int(b_pt[0]), int(b_pt[1])), 1)
                         pygame.draw.line(screen, NEON_YELLOW, (int(b_pt[0]), int(b_pt[1])), p_coord, 1)
                         pygame.gfxdraw.filled_circle(screen, int(b_pt[0]), int(b_pt[1]), 2, NEON_YELLOW)
 
     # ==========================================
-    # 🖼️ 10. Rendering GUI Panel
+    # 🖼️ 10. Rendering GUI Panel (الواجهة الكاملة المحدثة)
     # ==========================================
     pygame.draw.rect(screen, GUI_BG, (gui_x, gui_y, gui_w, gui_h), border_radius=8)
     pygame.draw.rect(screen, CYAN, (gui_x, gui_y, gui_w, gui_h), 1, border_radius=8)  
     pygame.draw.line(screen, CYAN, (gui_x, gui_y + 30), (gui_x + gui_w, gui_y + 30), 1) 
     screen.blit(gui_title_font.render("🎱 8BP CLEAN PRO PANEL", True, CYAN), (gui_x + 15, gui_y + 6))
 
+    # أزرار القوة
     for idx, p_val in enumerate([50, 75, 100]):
         btn_x = gui_x + 15 + (idx * 70)
         btn_color = GUI_ACTIVE_COLOR if current_power == p_val else GUI_INACTIVE_COLOR
         pygame.draw.rect(screen, btn_color, (btn_x, gui_y + 45, 65, 25), border_radius=4)
         screen.blit(gui_font.render(f"{p_val}%", True, WHITE), (btn_x + 20, gui_y + 50))
 
+    # زرار الـ 3 lines
     pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 85, 210, 25), border_radius=4)
     state_color = GREEN if is_3line_enabled else RED
     pygame.draw.rect(screen, state_color, (gui_x + 185, gui_y + 89, 35, 17), border_radius=3)
     screen.blit(gui_font.render("3-Line Projection", True, WHITE), (gui_x + 22, gui_y + 85))
     screen.blit(gui_font.render("ON" if is_3line_enabled else "OFF", True, WHITE), (gui_x + 193, gui_y + 85))
 
+    # 🆕 زرار التحكم بالمالتي الجديد في القائمة (Multi-Lines Auto)
     pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 125, 210, 25), border_radius=4)
-    screen.blit(gui_font.render(f"Line Thickness: {line_thickness}", True, WHITE), (gui_x + 22, gui_y + 130))
-    pygame.draw.rect(screen, CYAN, (gui_x + 140, gui_y + 127, 35, 21), border_radius=3)
-    pygame.draw.rect(screen, CYAN, (gui_x + 185, gui_y + 127, 35, 21), border_radius=3)
-    screen.blit(gui_font.render("-", True, BLACK), (gui_x + 154, gui_y + 129))
-    screen.blit(gui_font.render("+", True, BLACK), (gui_x + 198, gui_y + 129))
+    multi_state_color = GREEN if is_multi_enabled else RED
+    pygame.draw.rect(screen, multi_state_color, (gui_x + 185, gui_y + 129, 35, 17), border_radius=3)
+    screen.blit(gui_font.render("Multi-Lines (Auto) [C]", True, WHITE), (gui_x + 22, gui_y + 125))
+    screen.blit(gui_font.render("ON" if is_multi_enabled else "OFF", True, WHITE), (gui_x + 193, gui_y + 125))
 
-    pygame.draw.rect(screen, (50, 150, 50), (gui_x + 15, gui_y + 190, 210, 28), border_radius=4)
-    screen.blit(gui_font.render("HIDE TOOL (Ctrl+H)", True, WHITE), (gui_x + 65, gui_y + 196))
-    pygame.draw.rect(screen, (200, 50, 50), (gui_x + 15, gui_y + 230, 210, 28), border_radius=4)
-    screen.blit(gui_font.render("CLOSE TOOL (Ctrl+Q)", True, WHITE), (gui_x + 62, gui_y + 236))
+    # سمك الخط
+    pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 165, 210, 25), border_radius=4)
+    screen.blit(gui_font.render(f"Line Thickness: {line_thickness}", True, WHITE), (gui_x + 22, gui_y + 170))
+    pygame.draw.rect(screen, CYAN, (gui_x + 140, gui_y + 167, 35, 21), border_radius=3)
+    pygame.draw.rect(screen, CYAN, (gui_x + 185, gui_y + 167, 35, 21), border_radius=3)
+    screen.blit(gui_font.render("-", True, BLACK), (gui_x + 154, gui_y + 169))
+    screen.blit(gui_font.render("+", True, BLACK), (gui_x + 198, gui_y + 169))
+
+    # أزرار الإخفاء والإغلاق
+    pygame.draw.rect(screen, (50, 150, 50), (gui_x + 15, gui_y + 230, 210, 28), border_radius=4)
+    screen.blit(gui_font.render("HIDE TOOL (Ctrl+H)", True, WHITE), (gui_x + 65, gui_y + 236))
+    pygame.draw.rect(screen, (200, 50, 50), (gui_x + 15, gui_y + 270, 210, 28), border_radius=4)
+    screen.blit(gui_font.render("CLOSE TOOL (Ctrl+Q)", True, WHITE), (gui_x + 62, gui_y + 276))
 
     pygame.display.update()
 
