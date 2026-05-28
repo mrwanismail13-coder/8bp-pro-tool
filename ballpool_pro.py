@@ -48,10 +48,10 @@ last_known_mx = SCREEN_WIDTH // 2
 last_known_my = SCREEN_HEIGHT // 2
 
 # ==========================================
-# 🎛️ 3. GUI Menu State & Dynamic Controls
+# 🎛️ 3. GUI Menu State & Custom Controls
 # ==========================================
 gui_x, gui_y = 50, 50       
-gui_w, gui_h = 240, 340       # تم ضبط الأبعاد لتستوعب كل الأزرار والتحكم في السمك
+gui_w, gui_h = 240, 340       
 is_dragging = False          
 drag_offset_x = 0
 drag_offset_y = 0
@@ -59,15 +59,15 @@ is_mouse_hovering_gui = False
 window_has_focus = True     
 is_hidden = False             
 
-# مفاتيح التشغيل والإطفاء للأنظمة (Toggles)
+# مفاتيح تشغيل الأنظمة والأزرار
 current_power = 100           # 50, 75, 100
-line_thickness = 2            # سمك الخطوط الافتراضي
-is_cue_detect_enabled = True  # نظام رصد العصا التلقائي
-is_3line_enabled = True       # نظام الجسد الكامل للكرة (3 خطوط)
-is_multibank_enabled = True   # نظام التنبؤ الشامل لكل الاحتمالات
+line_thickness = 2            # سُمك الخطوط القابل للتعديل
+is_cue_detect_enabled = True  # نظام تتبع خط اللعبة والعصا تلقائياً
+is_3line_enabled = True       # نظام الجسد الكامل (3 خطوط)
+is_multibank_enabled = True   # نظام التنبؤ الشامل (باندات البيضاء والهدف فقط)
 
 # ==========================================
-# 🧠 4. Memory Systems (Kalman & Memory)
+# 🧠 4. Stable Memory & Tracking Systems
 # ==========================================
 class PermanentWhiteBallMemory:
     def __init__(self):
@@ -124,10 +124,9 @@ last_lock_time = 0
 last_white_lock_time = 0
 last_hide_toggle_time = 0
 last_power_toggle_time = 0
-last_toggle_press_time = 0
 
 # ==========================================
-# 📐 5. Advanced Math & Custom 3-Line System
+# 📐 5. Advanced Math & Custom Line Rendering
 # ==========================================
 def distance(p1, p2):
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
@@ -142,9 +141,9 @@ def ghost_ball(target, pocket, radius):
 
 def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_color=YELLOW):
     """
-    🎨 نظام الألوان والجسد الكامل للكرة ذو الـ 3 خطوط متوازية:
-    - للكرة البيضاء: الخارجي أبيض والأوسط أسود.
-    - لباقي الكرات: الـ 3 خطوط تتبع لون الكرة الهدف.
+    🎨 نظام رسم الجسد الكامل المطور بـ 3 خطوط متوازية:
+    - للكرة البيضاء: الخارجيان أبيض والوسط أسود بالكامل للتباين الخارق.
+    - لباقي الكرات والارتدادات: الخطوط الثلاثة تتبع لون الكرة الهدف بشكل صافٍ وثابت بدون تحذيرات.
     """
     dx = end[0] - start[0]
     dy = end[1] - start[1]
@@ -158,45 +157,25 @@ def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_co
 
     if is_3line_enabled:
         if is_white_ball:
-            # الخارجي أبيض والأوسط أسود لتوفير تباين بصري خارق
+            # الخطوط الجانبية بيضاء والأوسط أسود تماماً بناءً على طلبك
             pygame.draw.line(surface, WHITE, (int(start[0] + nx), int(start[1] + ny)), (int(end[0] + nx), int(end[1] + ny)), line_thickness)
             pygame.draw.line(surface, BLACK, (int(start[0]), int(start[1])), (int(end[0]), int(end[1])), line_thickness)
             pygame.draw.line(surface, WHITE, (int(start[0] - nx), int(start[1] - ny)), (int(end[0] - nx), int(end[1] - ny)), line_thickness)
         else:
-            # باقي الكرات تتبع لونها الخاص بالكامل لعدم التداخل
+            # الكرات الأخرى والارتدادات تتبع لونها الصافي بالكامل
             pygame.draw.line(surface, ball_color, (int(start[0] + nx), int(start[1] + ny)), (int(end[0] + nx), int(end[1] + ny)), line_thickness)
             pygame.draw.line(surface, ball_color, (int(start[0]), int(start[1])), (int(end[0]), int(end[1])), line_thickness)
             pygame.draw.line(surface, ball_color, (int(start[0] - nx), int(start[1] - ny)), (int(end[0] - nx), int(end[1] - ny)), line_thickness)
     else:
-        # خط منفرد عادي في حال إيقاف النظام
+        # خط مفرد عادي في حالة الإيقاف من القائمة
         main_color = WHITE if is_white_ball else ball_color
         pygame.draw.line(surface, main_color, (int(start[0]), int(start[1])), (int(end[0]), int(end[1])), line_thickness)
 
-def check_blocking(target_pos, pocket_pos, all_circles):
-    """
-    🚫 نظام التحذير وعلامة المنع في حال وجود عائق في مسار الكرة
-    """
-    for (cx, cy, r) in all_circles:
-        if distance((cx, cy), target_pos) < 5 or distance((cx, cy), pocket_pos) < 5:
-            continue
-        # حساب المسافة العمودية من الكرة العائقة إلى خط المسار المستقيم
-        # Formula: area of triangle / base
-        x0, y0 = cx, cy
-        x1, y1 = target_pos
-        x2, y2 = pocket_pos
-        num = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
-        den = math.hypot(y2 - y1, x2 - x1)
-        if den == 0: continue
-        dist_to_line = num / den
-        
-        # التأكد إذا كان العائق يقع فعلياً بين النقطتين وليس خلفهما
-        dot = (x0 - x1) * (x2 - x1) + (y0 - y1) * (y2 - y1)
-        length_sq = (x2 - x1)**2 + (y2 - y1)**2
-        if 0 <= dot <= length_sq and dist_to_line < (BALL_RADIUS * 2):
-            return True
-    return False
-
 def calculate_manual_bank_point(target, pocket, bounds, side, power):
+    """
+    🎯 دالة حساب نقطة الباند المرنة:
+    ترجع وتتحرك ديناميكياً على الحواف حسب القوة المفعلة من الأزرار الثلاثة (50% أو 75% أو 100%).
+    """
     left, top, right, bottom = bounds
     tx, ty = target
     px, py = pocket
@@ -211,7 +190,7 @@ def calculate_manual_bank_point(target, pocket, bounds, side, power):
     elif power == 75:
         angle_factor = 1.5
     else:
-        angle_factor = 2.0  # قوة 50% تعطي ضعف الزاوية هندسياً
+        angle_factor = 2.0  # القوة 50% تعطي ضعف زاوية المرآة الكاملة
 
     if side == 'top':
         dist_y = py - adjusted_top
@@ -240,7 +219,7 @@ def calculate_manual_bank_point(target, pocket, bounds, side, power):
     return None
 
 # ==========================================
-# 🖼️ 6. Computer Vision & Auto Cue Detection
+# 🖼️ 6. Pixels Scan & Auto Game Line Tracking
 # ==========================================
 def detect_table(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -255,32 +234,38 @@ def detect_table(frame):
             return {"left": x, "top": y, "width": w, "height": h}
     return None
 
-def auto_detect_cue_angle(table_img, white_center_table):
+def track_game_aim_line_angle(table_img, white_table_pos):
     """
-    🔍 نظام رصد العصا التلقائي (Auto Detect Cue):
-    يبحث عن امتداد خط العصا الخشبي أو البكسلات الساطعة الموجهة للكرة البيضاء
+    🔍 الخوارزمية العبقرية لـ Auto Detect Cue:
+    تقوم بعمل مسح بكسلي إشعاعي (Radial Scan) حول الكرة البيضاء لالتقاط مسار وخط دليل اللعبة الأبيض الساطع.
+    تتحرك الخطوط أوتوماتيكياً فور تحريكك للعصا في اللعبة.
     """
-    if white_center_table is None: return None
-    gray = cv2.cvtColor(table_img, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=80, minLineLength=40, maxLineGap=10)
+    if white_table_pos is None: return None
+    h, w, _ = table_img.shape
+    wx, wy = int(white_table_pos[0]), int(white_table_pos[1])
     
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            # قياس مسافة الخط عن مركز الكرة البيضاء لمعرفة اتجاه التوجيه
-            numerator = abs((y2-y1)*white_center_table[0] - (x2-x1)*white_center_table[1] + x2*y1 - y2*x1)
-            denominator = math.hypot(y2-y1, x2-x1)
-            if denominator == 0: continue
-            if (numerator / denominator) < 15:  # الخط يمر أو موجه للكرة البيضاء تماماً
-                angle = math.atan2(y2 - y1, x2 - x1)
-                return angle
-    return None
+    scan_radius = BALL_RADIUS + 12  # نطاق الفحص الدائري المباشر خارج جسم الكرة البيضاء
+    num_samples = 360  # فحص 360 درجة حول الكرة
+    
+    best_angle = None
+    max_brightness = 0
+    
+    for i in range(num_samples):
+        angle = i * (np.pi / 180.0)
+        sx = int(wx + scan_radius * math.cos(angle))
+        sy = int(wy + scan_radius * math.sin(angle))
+        
+        if 0 <= sx < w and 0 <= sy < h:
+            # فحص البكسلات البيضاء الساطعة لخط الدليل
+            pixel = table_img[sy, sx]
+            brightness = int(pixel[0]) + int(pixel[1]) + int(pixel[2]) # Sum of BGR
+            if brightness > 720 and brightness > max_brightness: # بكسل أبيض ساطع قريب من 765
+                max_brightness = brightness
+                best_angle = angle
+                
+    return best_angle
 
 def get_ball_color_from_roi(roi):
-    """
-    🎨 دالة تحليل لون الكرة للحصول على خطوط مطابقة تماماً للونها الحقيقي
-    """
     if roi is None or roi.size == 0: return YELLOW
     avg_bgr = cv2.mean(roi)[:3]
     return (int(avg_bgr[2]), int(avg_bgr[1]), int(avg_bgr[0])) # Convert BGR to RGB
@@ -357,7 +342,7 @@ while running:
     except Exception:
         mx, my = last_known_mx, last_known_my
 
-    # 🕹️ الاختصارات من الكيبورد للتحكم السريع
+    # التحكم بالاختصارات السريعة من الكيبورد
     if keyboard.is_pressed("f3") and time.time() - last_power_toggle_time > 0.2:
         current_power = 50
         last_power_toggle_time = time.time()
@@ -386,27 +371,27 @@ while running:
         window_has_focus = False
         is_dragging = False
 
-    # معالجة أحداث الضغط على أزرار الواجهة وتفعيل/تعطيل الأنظمة بالماوس
+    # معالجة الضغط على أزرار واجهة التحكم
     for event in pygame.event.get():
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if is_mouse_hovering_gui:
-                # أزرار تحديد القوة
+                # أزرار تحديد القوة الثلاثة
                 if (gui_x + 15 <= mx <= gui_x + 80) and (gui_y + 45 <= my <= gui_y + 70): current_power = 50
                 elif (gui_x + 85 <= mx <= gui_x + 150) and (gui_y + 45 <= my <= gui_y + 70): current_power = 75
                 elif (gui_x + 155 <= mx <= gui_x + 220) and (gui_y + 45 <= my <= gui_y + 70): current_power = 100
                 
-                # أزرار الـ Toggles للأنظمة
+                # أزرار التبديل وتشغيل الأنظمة (Toggles)
                 elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 85 <= my <= gui_y + 110): is_cue_detect_enabled = not is_cue_detect_enabled
                 elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 120 <= my <= gui_y + 145): is_3line_enabled = not is_3line_enabled
                 elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 155 <= my <= gui_y + 180): is_multibank_enabled = not is_multibank_enabled
                 
-                # التحكم في سمك الخط (Thickness) عبر زر زيادة ونقصان
+                # التحكم في سُمك الخطوط (+ / -)
                 elif (gui_x + 140 <= mx <= gui_x + 175) and (gui_y + 200 <= my <= gui_y + 225): line_thickness = max(1, line_thickness - 1)
                 elif (gui_x + 185 <= mx <= gui_x + 220) and (gui_y + 200 <= my <= gui_y + 225): line_thickness = min(6, line_thickness + 1)
                 
-                # زر الإخفاء وزر الإغلاق
+                # أزرار النظام العامة
                 elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 250 <= my <= gui_y + 280): is_hidden = True
-                elif (gui_x + 15 <= mx <= gui_x + 290) and (gui_y + 290 <= my <= gui_y + 320): running = False
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 290 <= my <= gui_y + 320): running = False
                 else:
                     is_dragging = True
                     drag_offset_x = mx - gui_x
@@ -438,13 +423,12 @@ while running:
     table = frame[y:y+h, x:x+w]
     if table.size == 0: continue
 
-    # رصد الكرات باستخدام HoughCircles
     gray = cv2.cvtColor(table, cv2.COLOR_BGR2GRAY)
     blur = cv2.medianBlur(cv2.equalizeHist(gray), 5)
     circles = cv2.HoughCircles(blur, cv2.HOUGH_GRADIENT, dp=1.0, minDist=30, param1=70, param2=22, minRadius=12, maxRadius=20)
 
     raw_white_det = None
-    all_detected_balls = []
+    detected_target_color = YELLOW
 
     pockets = [
         (x + 24, y + 24), (x + w // 2, y + 14), (x + w - 24, y + 24),
@@ -455,21 +439,16 @@ while running:
     left_band, right_band = x + CUSHION_PADDING, x + w - CUSHION_PADDING
     table_bounds = (left_band, top_band, right_band, bottom_band)
 
-    detected_target_color = YELLOW
-
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
         for (cx, cy, r) in circles:
             cx_global, cy_global = int(cx + x), int(cy + y)
             if any(distance((cx_global, cy_global), p) < 40 for p in pockets): continue
-            
-            all_detected_balls.append((cx_global, cy_global, r))
 
             roi = table[max(0, cy-r):min(h, cy+r), max(0, cx-r):min(w, cx+r)]
             if is_strictly_white_ball(roi):
                 raw_white_det = (cx_global, cy_global)
             
-            # التقاط لون الكرة المقفولة يدوياً لو كانت قريبة من مكان الهدف المقفول
             stable_tgt = target_manager.update()
             if stable_tgt and distance((cx_global, cy_global), stable_tgt) < 20:
                 detected_target_color = get_ball_color_from_roi(roi)
@@ -514,26 +493,24 @@ while running:
         screen.blit(txt, (p[0] - 5, p[1] - 25 if idx < 3 else p[1] + 10))
 
     # ==========================================
-    # 🎯 9. Main Physics & Prediction Engine
+    # 🎯 9. Main Physics & Auto Track Engine
     # ==========================================
     if stable_white and stable_target:
-        # نظام رصد زاوية العصا التلقائي
         cue_angle = None
+        
+        # رصد زاوية اتجاه خط اللعبة الخارج من البيضاء أوتوماتيكياً عند تحريكك للعصا
         if is_cue_detect_enabled:
             white_table_pos = (stable_white[0] - x, stable_white[1] - y)
-            cue_angle = auto_detect_cue_angle(table, white_table_pos)
+            cue_angle = track_game_aim_line_angle(table, white_table_pos)
 
-        # تجهيز قائمة بالبوكيتات المراد الحساب لها (بوكيت واحد أو كل البوكيتات)
+        # حصر الحسابات والتركيز التام فقط على مكان البيضاء ومكان الهدف المقفول
         pockets_to_check = pockets if is_multibank_enabled else [pockets[selected_pocket]]
         sides_to_check = ['top', 'bottom', 'left', 'right']
 
         for current_pocket in pockets_to_check:
-            is_blocked = check_blocking(stable_target, current_pocket, all_detected_balls)
-            
-            # إذا كان الطريق مغلقاً بكرة أخرى، نقوم برسم علامة منع 🚫 أو استخدام لون تحذيري
-            current_ball_color = RED if is_blocked else detected_target_color
+            # تم إلغاء أي تحذيرات أو ألوان حمراء نهائياً لتظل الخطوط بلونها الصافي دائماً
+            current_ball_color = detected_target_color
 
-            # حساب المسار المباشر أو الارتدادات بناءً على اختيار الباند
             chosen_side = None
             if keyboard.is_pressed("i"): chosen_side = 'top'
             elif keyboard.is_pressed("m"): chosen_side = 'bottom'
@@ -543,23 +520,19 @@ while running:
             if chosen_side or is_multibank_enabled:
                 sides = [chosen_side] if chosen_side else sides_to_check
                 for s in sides:
+                    # نقاط الباند ترجع وتتحرك حسب القوة الثلاثية المفعلة فقط
                     bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, s, current_power)
                     if bank_point:
                         g_pos = ghost_ball(stable_target, bank_point, BALL_RADIUS)
                         
-                        # رسم خطوط البيضاء بالـ 3 خطوط الملونة المخصصة (أبيض/أسود/أبيض)
+                        # خطوط البيضاء بالـ 3 خطوط متوازية مع دمج ميزة الخط الأسود الأوسط للتباين العالي
                         draw_custom_3lines(screen, stable_white, g_pos, BALL_RADIUS, is_white_ball=True)
                         pygame.gfxdraw.aacircle(screen, int(g_pos[0]), int(g_pos[1]), BALL_RADIUS, WHITE)
                         
-                        # رسم خطوط الكرة الهدف باللون الخاص بها ومراقب بالمنع 🚫
+                        # خطوط الارتداد تتبع لون الكرة المستهدفة الصافي تماماً وبدون أي عوائق حمراء
                         draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=current_ball_color)
                         pygame.draw.line(screen, current_ball_color, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
                         pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
-                        
-                        if is_blocked:
-                            # رسم علامة منع (X) فوق الهدف لإنذارك
-                            pygame.draw.line(screen, RED, (int(stable_target[0])-10, int(stable_target[1])-10), (int(stable_target[0])+10, int(stable_target[1])+10), 3)
-                            pygame.draw.line(screen, RED, (int(stable_target[0])+10, int(stable_target[1])-10), (int(stable_target[0])-10, int(stable_target[1])+10), 3)
             else:
                 g_pos = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
                 draw_custom_3lines(screen, stable_white, g_pos, BALL_RADIUS, is_white_ball=True)
@@ -575,14 +548,14 @@ while running:
 
     screen.blit(gui_title_font.render("🎱 8BP PRO CONTROL PANEL", True, CYAN), (gui_x + 15, gui_y + 6))
 
-    # أزرار تحديد القوة الثلاثية اليدوية
+    # عرض وتبديل أزرار القوة الثلاثة (50%, 75%, 100%)
     for idx, p_val in enumerate([50, 75, 100]):
         btn_x = gui_x + 15 + (idx * 70)
         btn_color = GUI_ACTIVE_COLOR if current_power == p_val else GUI_INACTIVE_COLOR
         pygame.draw.rect(screen, btn_color, (btn_x, gui_y + 45, 65, 25), border_radius=4)
         screen.blit(gui_font.render(f"{p_val}%", True, WHITE), (btn_x + 20, gui_y + 50))
 
-    # قائمة الأزرار التفاعلية (Toggles) مع مؤشرات تشغيل ملونة
+    # قائمة أزرار التحكم وتشغيل الأنظمة الفردية (Toggles)
     toggles = [
         ("Auto Detect Cue", is_cue_detect_enabled, gui_y + 85),
         ("3-Line Projection", is_3line_enabled, gui_y + 120),
@@ -596,7 +569,7 @@ while running:
         screen.blit(gui_font.render(label, True, WHITE), (gui_x + 22, t_y + 5))
         screen.blit(gui_font.render(state_txt, True, WHITE), (gui_x + 193, t_y + 5))
 
-    # تحكم سمك الخط البصري (Line Thickness Control)
+    # أزرار زيادة ونقصان سُمك الخطوط (+ / -)
     pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 200, 210, 25), border_radius=4)
     screen.blit(gui_font.render(f"Line Thickness: {line_thickness}", True, WHITE), (gui_x + 22, gui_y + 205))
     pygame.draw.rect(screen, CYAN, (gui_x + 140, gui_y + 202, 35, 21), border_radius=3)
@@ -604,7 +577,7 @@ while running:
     screen.blit(gui_font.render("-", True, BLACK), (gui_x + 154, gui_y + 204))
     screen.blit(gui_font.render("+", True, BLACK), (gui_x + 198, gui_y + 204))
 
-    # أزرار النظام (HIDE & CLOSE)
+    # أزرار النظام العامة للإخفاء والإغلاق
     pygame.draw.rect(screen, (50, 150, 50), (gui_x + 15, gui_y + 250, 210, 28), border_radius=4)
     screen.blit(gui_font.render("HIDE TOOL (Ctrl+H)", True, WHITE), (gui_x + 65, gui_y + 256))
 
