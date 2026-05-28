@@ -59,7 +59,6 @@ is_mouse_hovering_gui = False
 window_has_focus = True     
 is_hidden = False             
 
-# مفاتيح التشغيل والإطفاء للأنظمة (Toggles)
 current_power = 100           
 line_thickness = 2            
 is_cue_detect_enabled = True  
@@ -74,11 +73,9 @@ class PermanentWhiteBallMemory:
         self.last_valid_pos = None  
 
     def update(self, raw_white):
-        # تتبع ذكي: إذا التقط الفحص الكورة البيضاء نحدث مكانها فورا
         if raw_white is not None:
             self.last_valid_pos = raw_white
             return raw_white
-        # إذا مرت العصا أو تشوش اللون مؤقتاً، نعتمد آخر مكان معلوم بدون اهتزاز أو سقوط
         return self.last_valid_pos
         
     def manual_lock(self, x, y):
@@ -98,9 +95,9 @@ class TargetBallManager:
                              [0., 0., 0., 1.]])
         self.kf.H = np.array([[1., 0., 0., 0.],
                              [0., 1., 0., 0.]])
-        self.kf.P *= 2.
-        self.kf.R *= 0.01  
-        self.kf.Q *= 0.005
+        self.kf.P *= 0.5   # تم تقليل تشتت الفلتر لإنهاء مشكلة الدوائر المتكررة الـ (Ghosting)
+        self.kf.R *= 0.05  
+        self.kf.Q *= 0.001
 
     def lock_new(self, x, y):
         self.locked_pos = (x, y)
@@ -143,11 +140,6 @@ def ghost_ball(target, pocket, radius):
     return (pocket[0] + dx * ratio, pocket[1] + dy * ratio)
 
 def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_color=YELLOW):
-    """
-    🎨 نظام الألوان والجسد الكامل للكرة ذو الـ 3 خطوط متوازية:
-    - للكرة البيضاء: الخارجي أبيض والأوسط أسود لتأمين تباين ورؤية كاملة.
-    - لباقي الكرات: الـ 3 خطوط تتبع لون الكرة الهدف.
-    """
     dx = end[0] - start[0]
     dy = end[1] - start[1]
     dist = math.hypot(dx, dy)
@@ -199,12 +191,9 @@ def calculate_manual_bank_point(target, pocket, bounds, side, power):
     adjusted_left = left + BALL_RADIUS
     adjusted_right = right - BALL_RADIUS
 
-    if power == 100:
-        angle_factor = 1.0
-    elif power == 75:
-        angle_factor = 1.5
-    else:
-        angle_factor = 2.0 
+    if power == 100: angle_factor = 1.0
+    elif power == 75: angle_factor = 1.5
+    else: angle_factor = 2.0 
 
     if side == 'top':
         dist_y = py - adjusted_top
@@ -271,12 +260,7 @@ def get_ball_color_from_roi(roi):
     return (int(avg_bgr[2]), int(avg_bgr[1]), int(avg_bgr[0])) 
 
 def is_strictly_white_ball(roi):
-    """ 
-    🔍 نظام الفحص الثلاثي المطور للكرة البيضاء:
-    يفحص نواة السنتر بدقة بنسبة 40% للتخلص من انعكاسات أطراف العصا.
-    """
     if roi is None or roi.size == 0: return False
-    
     gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     h, w = gray_roi.shape
     edges = cv2.Canny(gray_roi, 100, 200)
@@ -286,7 +270,6 @@ def is_strictly_white_ball(roi):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     center_hsv = hsv[int(h*0.3):int(h*0.7), int(w*0.3):int(w*0.7)]
     
-    # فلتر التشبع اللوني المنخفض الصارم (لمنع تداخل الكرات الصفراء والفاتحة)
     lower_white = np.array([0, 0, 180]) 
     upper_white = np.array([180, 40, 255])
     
@@ -437,8 +420,6 @@ while running:
     table_bounds = (left_band, top_band, right_band, bottom_band)
 
     detected_target_color = YELLOW
-
-    # جلب آخر إحداثيات معروفة للكرة البيضاء لدعم سرعة الفحص بالـ Temporal Tracking
     stable_white = white_memory.update(None)
 
     if circles is not None:
@@ -450,13 +431,10 @@ while running:
             all_detected_balls.append((cx_global, cy_global, r))
             roi = table[max(0, cy-r):min(h, cy+r), max(0, cx-r):min(w, cx+r)]
             
-            # فحص ذكي: إذا كانت الكورة قريبة جداً من موضعها القديم المعلوم، يمنحها أولوية فحص عالية
             if stable_white and distance((cx_global, cy_global), stable_white) < 25:
-                if is_strictly_white_ball(roi):
-                    raw_white_det = (cx_global, cy_global)
+                if is_strictly_white_ball(roi): raw_white_det = (cx_global, cy_global)
             else:
-                if is_strictly_white_ball(roi):
-                    raw_white_det = (cx_global, cy_global)
+                if is_strictly_white_ball(roi): raw_white_det = (cx_global, cy_global)
             
             stable_tgt = target_manager.update()
             if stable_tgt and distance((cx_global, cy_global), stable_tgt) < 20:
@@ -473,8 +451,8 @@ while running:
     stable_white = white_memory.update(raw_white_det)
 
     if stable_white:
+        # رسم دائرة واحدة ناعمة ومحددة حول الكرة البيضاء بدون تكرار
         pygame.gfxdraw.aacircle(screen, int(stable_white[0]), int(stable_white[1]), BALL_RADIUS, WHITE)
-        pygame.gfxdraw.aacircle(screen, int(stable_white[0]), int(stable_white[1]), BALL_RADIUS - 2, CYAN)
 
     if keyboard.is_pressed("z") and time.time() - last_lock_time > 0.15:
         precise_center = find_precise_ball_center_near_mouse(table, mx - x, my - y)
@@ -489,6 +467,7 @@ while running:
     stable_target = target_manager.update()
 
     if stable_target:
+        # 🟢 حل مشكلة الدوائر الكتير: رسم دائرتين فقط (خارجية وداخلية) ناعمتين حول الهدف المقفل
         pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS, BLUE)
         pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS - 2, YELLOW)
 
@@ -502,7 +481,7 @@ while running:
         screen.blit(txt, (p[0] - 5, p[1] - 25 if idx < 3 else p[1] + 10))
 
     # ==========================================
-    # 🎯 9. Main Physics & Prediction Engine
+    # 🎯 9. Main Physics & Clean Prediction Engine
     # ==========================================
     if stable_white and stable_target:
         cue_angle = None
@@ -514,8 +493,19 @@ while running:
         sides_to_check = ['top', 'bottom', 'left', 'right']
 
         for current_pocket in pockets_to_draw:
+            # فلتر المسار النظيف: إذا كانت الحفرة مغلقة تماماً بكورة تانية، لا تحسبها ولا ترسم خطوطها المشتتة
             is_blocked = check_blocking(stable_target, current_pocket, all_detected_balls)
-            current_ball_color = RED if is_blocked else detected_target_color
+            if is_blocked and is_multibank_enabled: continue 
+
+            current_ball_color = detected_target_color
+            g_pos = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
+
+            # 🛠️ فلتر زاوية العصا (Cue Angle Filter): منع المروحة البيضاء العشوائية
+            if cue_angle is not None:
+                predicted_angle = math.atan2(g_pos[1] - stable_white[1], g_pos[0] - stable_white[0])
+                angle_diff = abs(predicted_angle - cue_angle)
+                angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff)) # Normalize
+                if abs(angle_diff) > 0.25: continue # تجاوز أي هدف خارج نطاق رؤية العصا (حوالي 14 درجة)
 
             chosen_side = None
             if keyboard.is_pressed("i"): chosen_side = 'top'
@@ -528,21 +518,22 @@ while running:
                 for s in sides:
                     bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, s, current_power)
                     if bank_point:
-                        g_pos = ghost_ball(stable_target, bank_point, BALL_RADIUS)
+                        g_pos_bank = ghost_ball(stable_target, bank_point, BALL_RADIUS)
                         
-                        # رسم خطوط التتبع للكرة البيضاء بالخط الأسود المركزي دايماً
-                        draw_custom_3lines(screen, stable_white, g_pos, BALL_RADIUS, is_white_ball=True)
-                        pygame.gfxdraw.aacircle(screen, int(g_pos[0]), int(g_pos[1]), BALL_RADIUS, WHITE)
+                        # فحص زاوية العصا للضربة المرتدة أيضاً لمنع التشتيت
+                        if cue_angle is not None:
+                            pred_bank_angle = math.atan2(g_pos_bank[1] - stable_white[1], g_pos_bank[0] - stable_white[0])
+                            bank_angle_diff = abs(pred_bank_angle - cue_angle)
+                            bank_angle_diff = math.atan2(math.sin(bank_angle_diff), math.cos(bank_angle_diff))
+                            if abs(bank_angle_diff) > 0.25: continue
+
+                        draw_custom_3lines(screen, stable_white, g_pos_bank, BALL_RADIUS, is_white_ball=True)
+                        pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE)
                         
                         draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=current_ball_color)
                         pygame.draw.line(screen, current_ball_color, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
                         pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
-                        
-                        if is_blocked:
-                            pygame.draw.line(screen, RED, (int(stable_target[0])-10, int(stable_target[1])-10), (int(stable_target[0])+10, int(stable_target[1])+10), 3)
-                            pygame.draw.line(screen, RED, (int(stable_target[0])+10, int(stable_target[1])-10), (int(stable_target[0])-10, int(stable_target[1])+10), 3)
             else:
-                g_pos = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
                 draw_custom_3lines(screen, stable_white, g_pos, BALL_RADIUS, is_white_ball=True)
                 pygame.gfxdraw.aacircle(screen, int(g_pos[0]), int(g_pos[1]), BALL_RADIUS, WHITE)
                 draw_custom_3lines(screen, stable_target, current_pocket, BALL_RADIUS, is_white_ball=False, ball_color=current_ball_color)
