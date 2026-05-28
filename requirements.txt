@@ -1,0 +1,7 @@
+pygame
+opencv-python
+numpy
+dxcam
+keyboard
+filterpy
+pywin32
