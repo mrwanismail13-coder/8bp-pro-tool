@@ -1,0 +1,36 @@
+name: Build Billiards Tool EXE
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # يتيح لك تشغيل البناء يدوياً في أي وقت
+
+jobs:
+  build:
+    runs-on: windows-latest # البناء يتم على سيرفر ويندوز لضمان تشغيل الـ EXE
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --onefile --noconsole --clean --name="8BP_Pro_Tool" ballpool_pro.py
+      # ملاحظة: --noconsole بتخفي الشاشة السوداء بتاعت الـ CMD وبتسيب الواجهة العائمة بس تظهر
+
+    - name: Upload Executable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Billiards-Tool-EXE
+        path: dist/8BP_Pro_Tool.exe
