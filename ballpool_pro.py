@@ -29,16 +29,15 @@ SCREEN_WIDTH = win32api.GetSystemMetrics(0)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(1)
 TRANSPARENT = (0, 0, 0)
 
-# Colors Palette
+# 🎨 خريطة الألوان الذكية المفصولة تماماً لمنع التشتيت
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
-YELLOW = (255, 255, 0)
+CYAN = (0, 255, 255)         # 🔵 خط الاستريت (المباشر)
+NEON_YELLOW = (255, 255, 0)  # 🟡 خط البند (الارتداد)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 BLUE = (0, 162, 232)
-PINK = (255, 0, 128)
 ORANGE = (255, 165, 0)
-CYAN = (0, 200, 255)
 GUI_BG = (25, 25, 30)      
 GUI_TEXT = (240, 240, 240)  
 GUI_ACTIVE_COLOR = (0, 162, 232)
@@ -51,7 +50,7 @@ last_known_my = SCREEN_HEIGHT // 2
 # 🎛️ 3. GUI Menu State & Dynamic Controls
 # ==========================================
 gui_x, gui_y = 50, 50       
-gui_w, gui_h = 240, 340       
+gui_w, gui_h = 240, 280       
 is_dragging = False          
 drag_offset_x = 0
 drag_offset_y = 0
@@ -61,12 +60,10 @@ is_hidden = False
 
 current_power = 100           
 line_thickness = 2            
-is_cue_detect_enabled = True  
 is_3line_enabled = True       
-is_multibank_enabled = True   
 
 # ==========================================
-# 🧠 4. Memory Systems (Temporal Tracking & Kalman)
+# 🧠 4. Memory Systems (Pro Target Lock & State Memory)
 # ==========================================
 class PermanentWhiteBallMemory:
     def __init__(self):
@@ -95,7 +92,7 @@ class TargetBallManager:
                              [0., 0., 0., 1.]])
         self.kf.H = np.array([[1., 0., 0., 0.],
                              [0., 1., 0., 0.]])
-        self.kf.P *= 0.5   # تم تقليل تشتت الفلتر لإنهاء مشكلة الدوائر المتكررة الـ (Ghosting)
+        self.kf.P *= 0.5   
         self.kf.R *= 0.05  
         self.kf.Q *= 0.001
 
@@ -123,7 +120,9 @@ last_lock_time = 0
 last_white_lock_time = 0
 last_hide_toggle_time = 0
 last_power_toggle_time = 0
-last_toggle_press_time = 0
+
+# 💾 متغير الذاكرة المستقرة للبند (يمنع الاختفاء عند ترك الزرار)
+current_bank_side = None 
 
 # ==========================================
 # 📐 5. Advanced Math & Custom 3-Line System
@@ -139,7 +138,7 @@ def ghost_ball(target, pocket, radius):
     ratio = (dist + radius * 2) / dist
     return (pocket[0] + dx * ratio, pocket[1] + dy * ratio)
 
-def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_color=YELLOW):
+def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_color=CYAN):
     dx = end[0] - start[0]
     dy = end[1] - start[1]
     dist = math.hypot(dx, dy)
@@ -162,24 +161,6 @@ def draw_custom_3lines(surface, start, end, radius, is_white_ball=False, ball_co
     else:
         main_color = WHITE if is_white_ball else ball_color
         pygame.draw.line(surface, main_color, (int(start[0]), int(start[1])), (int(end[0]), int(end[1])), line_thickness)
-
-def check_blocking(target_pos, pocket_pos, all_circles):
-    for (cx, cy, r) in all_circles:
-        if distance((cx, cy), target_pos) < 5 or distance((cx, cy), pocket_pos) < 5:
-            continue
-        x0, y0 = cx, cy
-        x1, y1 = target_pos
-        x2, y2 = pocket_pos
-        num = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
-        den = math.hypot(y2 - y1, x2 - x1)
-        if den == 0: continue
-        dist_to_line = num / den
-        
-        dot = (x0 - x1) * (x2 - x1) + (y0 - y1) * (y2 - y1)
-        length_sq = (x2 - x1)**2 + (y2 - y1)**2
-        if 0 <= dot <= length_sq and dist_to_line < (BALL_RADIUS * 2):
-            return True
-    return False
 
 def calculate_manual_bank_point(target, pocket, bounds, side, power):
     left, top, right, bottom = bounds
@@ -222,7 +203,7 @@ def calculate_manual_bank_point(target, pocket, bounds, side, power):
     return None
 
 # ==========================================
-# 🖼️ 6. Improved Computer Vision Filters
+# 🖼️ 6. Computer Vision & Table Detection
 # ==========================================
 def detect_table(frame):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -237,28 +218,6 @@ def detect_table(frame):
             return {"left": x, "top": y, "width": w, "height": h}
     return None
 
-def auto_detect_cue_angle(table_img, white_center_table):
-    if white_center_table is None: return None
-    gray = cv2.cvtColor(table_img, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=80, minLineLength=40, maxLineGap=10)
-    
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            numerator = abs((y2-y1)*white_center_table[0] - (x2-x1)*white_center_table[1] + x2*y1 - y2*x1)
-            denominator = math.hypot(y2-y1, x2-x1)
-            if denominator == 0: continue
-            if (numerator / denominator) < 15:  
-                angle = math.atan2(y2 - y1, x2 - x1)
-                return angle
-    return None
-
-def get_ball_color_from_roi(roi):
-    if roi is None or roi.size == 0: return YELLOW
-    avg_bgr = cv2.mean(roi)[:3]
-    return (int(avg_bgr[2]), int(avg_bgr[1]), int(avg_bgr[0])) 
-
 def is_strictly_white_ball(roi):
     if roi is None or roi.size == 0: return False
     gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -269,10 +228,8 @@ def is_strictly_white_ball(roi):
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     center_hsv = hsv[int(h*0.3):int(h*0.7), int(w*0.3):int(w*0.7)]
-    
     lower_white = np.array([0, 0, 180]) 
     upper_white = np.array([180, 40, 255])
-    
     mask = cv2.inRange(center_hsv, lower_white, upper_white)
     ratio = np.sum(mask == 255) / mask.size
     return ratio > 0.80
@@ -332,6 +289,7 @@ while running:
     except Exception:
         mx, my = last_known_mx, last_known_my
 
+    # التحكم بقوة الارتداد عبر الاختصارات F3, F4, F5
     if keyboard.is_pressed("f3") and time.time() - last_power_toggle_time > 0.2:
         current_power = 50
         last_power_toggle_time = time.time()
@@ -365,13 +323,11 @@ while running:
                 if (gui_x + 15 <= mx <= gui_x + 80) and (gui_y + 45 <= my <= gui_y + 70): current_power = 50
                 elif (gui_x + 85 <= mx <= gui_x + 150) and (gui_y + 45 <= my <= gui_y + 70): current_power = 75
                 elif (gui_x + 155 <= mx <= gui_x + 220) and (gui_y + 45 <= my <= gui_y + 70): current_power = 100
-                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 85 <= my <= gui_y + 110): is_cue_detect_enabled = not is_cue_detect_enabled
-                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 120 <= my <= gui_y + 145): is_3line_enabled = not is_3line_enabled
-                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 155 <= my <= gui_y + 180): is_multibank_enabled = not is_multibank_enabled
-                elif (gui_x + 140 <= mx <= gui_x + 175) and (gui_y + 200 <= my <= gui_y + 225): line_thickness = max(1, line_thickness - 1)
-                elif (gui_x + 185 <= mx <= gui_x + 220) and (gui_y + 200 <= my <= gui_y + 225): line_thickness = min(6, line_thickness + 1)
-                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 250 <= my <= gui_y + 280): is_hidden = True
-                elif (gui_x + 15 <= mx <= gui_x + 290) and (gui_y + 290 <= my <= gui_y + 320): running = False
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 85 <= my <= gui_y + 110): is_3line_enabled = not is_3line_enabled
+                elif (gui_x + 140 <= mx <= gui_x + 175) and (gui_y + 125 <= my <= gui_y + 150): line_thickness = max(1, line_thickness - 1)
+                elif (gui_x + 185 <= mx <= gui_x + 220) and (gui_y + 125 <= my <= gui_y + 150): line_thickness = min(6, line_thickness + 1)
+                elif (gui_x + 15 <= mx <= gui_x + 225) and (gui_y + 190 <= my <= gui_y + 220): is_hidden = True
+                elif (gui_x + 15 <= mx <= gui_x + 290) and (gui_y + 230 <= my <= gui_y + 260): running = False
                 else:
                     is_dragging = True
                     drag_offset_x = mx - gui_x
@@ -403,13 +359,8 @@ while running:
     table = frame[y:y+h, x:x+w]
     if table.size == 0: continue
 
-    gray = cv2.cvtColor(table, cv2.COLOR_BGR2GRAY)
-    blur = cv2.medianBlur(cv2.equalizeHist(gray), 5)
-    circles = cv2.HoughCircles(blur, cv2.HOUGH_GRADIENT, dp=1.0, minDist=30, param1=70, param2=22, minRadius=12, maxRadius=20)
-
+    # تم مسح اللوب العام لتحديث الكرات العشوائي نهائياً لراحة الـ CPU ومنع الزحمة
     raw_white_det = None
-    all_detected_balls = []
-
     pockets = [
         (x + 24, y + 24), (x + w // 2, y + 14), (x + w - 24, y + 24),
         (x + 24, y + h - 24), (x + w // 2, y + h - 14), (x + w - 24, y + h - 24)
@@ -419,27 +370,7 @@ while running:
     left_band, right_band = x + CUSHION_PADDING, x + w - CUSHION_PADDING
     table_bounds = (left_band, top_band, right_band, bottom_band)
 
-    detected_target_color = YELLOW
-    stable_white = white_memory.update(None)
-
-    if circles is not None:
-        circles = np.round(circles[0, :]).astype("int")
-        for (cx, cy, r) in circles:
-            cx_global, cy_global = int(cx + x), int(cy + y)
-            if any(distance((cx_global, cy_global), p) < 40 for p in pockets): continue
-            
-            all_detected_balls.append((cx_global, cy_global, r))
-            roi = table[max(0, cy-r):min(h, cy+r), max(0, cx-r):min(w, cx+r)]
-            
-            if stable_white and distance((cx_global, cy_global), stable_white) < 25:
-                if is_strictly_white_ball(roi): raw_white_det = (cx_global, cy_global)
-            else:
-                if is_strictly_white_ball(roi): raw_white_det = (cx_global, cy_global)
-            
-            stable_tgt = target_manager.update()
-            if stable_tgt and distance((cx_global, cy_global), stable_tgt) < 20:
-                detected_target_color = get_ball_color_from_roi(roi)
-
+    # ⚪ تتبع الكرة البيضاء الذكي بالطلب (عند الضغط على A)
     if keyboard.is_pressed("a") and time.time() - last_white_lock_time > 0.15:
         precise_white = find_precise_ball_center_near_mouse(table, mx - x, my - y)
         if precise_white is not None:
@@ -448,12 +379,12 @@ while running:
             white_memory.manual_lock(mx, my)
         last_white_lock_time = time.time()
 
-    stable_white = white_memory.update(raw_white_det)
+    stable_white = white_memory.update(None)
 
     if stable_white:
-        # رسم دائرة واحدة ناعمة ومحددة حول الكرة البيضاء بدون تكرار
         pygame.gfxdraw.aacircle(screen, int(stable_white[0]), int(stable_white[1]), BALL_RADIUS, WHITE)
 
+    # 🎯 تتبع الكرة الهدف بالطلب والذاكرة المستقرة (عند الضغط على Z)
     if keyboard.is_pressed("z") and time.time() - last_lock_time > 0.15:
         precise_center = find_precise_ball_center_near_mouse(table, mx - x, my - y)
         if precise_center is not None:
@@ -462,15 +393,18 @@ while running:
             target_manager.lock_new(mx, my)
         last_lock_time = time.time()
 
-    if keyboard.is_pressed("x"): target_manager.clear()
+    # ❌ زرار X لمسح التثبيت والعودة للحالة الصامتة تماماً
+    if keyboard.is_pressed("x"): 
+        target_manager.clear()
+        current_bank_side = None
 
     stable_target = target_manager.update()
 
     if stable_target:
-        # 🟢 حل مشكلة الدوائر الكتير: رسم دائرتين فقط (خارجية وداخلية) ناعمتين حول الهدف المقفل
         pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS, BLUE)
-        pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS - 2, YELLOW)
+        pygame.gfxdraw.aacircle(screen, int(stable_target[0]), int(stable_target[1]), BALL_RADIUS - 1, BLUE)
 
+    # اختيار الحفرة الفردية بالطلب (من 1 لـ 6)
     for i in range(1, 7):
         if keyboard.is_pressed(str(i)): selected_pocket = i - 1
 
@@ -480,72 +414,50 @@ while running:
         txt = pocket_font.render(f"{idx+1}", True, WHITE if idx == selected_pocket else ORANGE)
         screen.blit(txt, (p[0] - 5, p[1] - 25 if idx < 3 else p[1] + 10))
 
+    # 🕹️ إدارة ذاكرة البند المستقرة (أزرار خطف بدون حاجة لاستمرار الضغط)
+    if keyboard.is_pressed("i"): current_bank_side = 'top'
+    elif keyboard.is_pressed("m"): current_bank_side = 'bottom'
+    elif keyboard.is_pressed("j"): current_bank_side = 'left'
+    elif keyboard.is_pressed("k"): current_bank_side = 'right'
+    elif keyboard.is_pressed("e"): current_bank_side = None # زرار الهروب للعودة للاستريت فقط
+
     # ==========================================
-    # 🎯 9. Main Physics & Clean Prediction Engine
+    # 🎯 9. Clean State Engine (لا حسابات بدون أمر)
     # ==========================================
     if stable_white and stable_target:
-        cue_angle = None
-        if is_cue_detect_enabled:
-            white_table_pos = (stable_white[0] - x, stable_white[1] - y)
-            cue_angle = auto_detect_cue_angle(table, white_table_pos)
+        current_pocket = pockets[selected_pocket]
 
-        pockets_to_draw = pockets if is_multibank_enabled else [pockets[selected_pocket]]
-        sides_to_check = ['top', 'bottom', 'left', 'right']
+        # 🔵 1. رسم خط الاستريت المباشر بلون Cyan (يظهر فوراً عند ضغط Z)
+        g_pos_straight = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
+        draw_custom_3lines(screen, stable_white, g_pos_straight, BALL_RADIUS, is_white_ball=True)
+        pygame.gfxdraw.aacircle(screen, int(g_pos_straight[0]), int(g_pos_straight[1]), BALL_RADIUS, WHITE)
+        draw_custom_3lines(screen, stable_target, current_pocket, BALL_RADIUS, is_white_ball=False, ball_color=CYAN)
 
-        for current_pocket in pockets_to_draw:
-            # فلتر المسار النظيف: إذا كانت الحفرة مغلقة تماماً بكورة تانية، لا تحسبها ولا ترسم خطوطها المشتتة
-            is_blocked = check_blocking(stable_target, current_pocket, all_detected_balls)
-            if is_blocked and is_multibank_enabled: continue 
-
-            current_ball_color = detected_target_color
-            g_pos = ghost_ball(stable_target, current_pocket, BALL_RADIUS)
-
-            # 🛠️ فلتر زاوية العصا (Cue Angle Filter): منع المروحة البيضاء العشوائية
-            if cue_angle is not None:
-                predicted_angle = math.atan2(g_pos[1] - stable_white[1], g_pos[0] - stable_white[0])
-                angle_diff = abs(predicted_angle - cue_angle)
-                angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff)) # Normalize
-                if abs(angle_diff) > 0.25: continue # تجاوز أي هدف خارج نطاق رؤية العصا (حوالي 14 درجة)
-
-            chosen_side = None
-            if keyboard.is_pressed("i"): chosen_side = 'top'
-            elif keyboard.is_pressed("m"): chosen_side = 'bottom'
-            elif keyboard.is_pressed("j"): chosen_side = 'left'
-            elif keyboard.is_pressed("k"): chosen_side = 'right'
-
-            if chosen_side or is_multibank_enabled:
-                sides = [chosen_side] if chosen_side else sides_to_check
-                for s in sides:
-                    bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, s, current_power)
-                    if bank_point:
-                        g_pos_bank = ghost_ball(stable_target, bank_point, BALL_RADIUS)
-                        
-                        # فحص زاوية العصا للضربة المرتدة أيضاً لمنع التشتيت
-                        if cue_angle is not None:
-                            pred_bank_angle = math.atan2(g_pos_bank[1] - stable_white[1], g_pos_bank[0] - stable_white[0])
-                            bank_angle_diff = abs(pred_bank_angle - cue_angle)
-                            bank_angle_diff = math.atan2(math.sin(bank_angle_diff), math.cos(bank_angle_diff))
-                            if abs(bank_angle_diff) > 0.25: continue
-
-                        draw_custom_3lines(screen, stable_white, g_pos_bank, BALL_RADIUS, is_white_ball=True)
-                        pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE)
-                        
-                        draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=current_ball_color)
-                        pygame.draw.line(screen, current_ball_color, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
-                        pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
-            else:
-                draw_custom_3lines(screen, stable_white, g_pos, BALL_RADIUS, is_white_ball=True)
-                pygame.gfxdraw.aacircle(screen, int(g_pos[0]), int(g_pos[1]), BALL_RADIUS, WHITE)
-                draw_custom_3lines(screen, stable_target, current_pocket, BALL_RADIUS, is_white_ball=False, ball_color=current_ball_color)
+        # 🟡 2. رسم خط البند باللون الأصفر الفسفوري بالاعتماد على الذاكرة المستقرة
+        if current_bank_side is not None:
+            bank_point = calculate_manual_bank_point(stable_target, current_pocket, table_bounds, current_bank_side, current_power)
+            if bank_point:
+                g_pos_bank = ghost_ball(stable_target, bank_point, BALL_RADIUS)
+                
+                # تحديث مسار البيضاء التخيلي المتوقع لضربة البند
+                draw_custom_3lines(screen, stable_white, g_pos_bank, BALL_RADIUS, is_white_ball=True)
+                pygame.gfxdraw.aacircle(screen, int(g_pos_bank[0]), int(g_pos_bank[1]), BALL_RADIUS, WHITE)
+                
+                # خط الهدف إلى الجدار (Neon Yellow)
+                draw_custom_3lines(screen, stable_target, bank_point, BALL_RADIUS, is_white_ball=False, ball_color=NEON_YELLOW)
+                # خط الارتداد من الجدار إلى الحفرة المحددة
+                pygame.draw.line(screen, NEON_YELLOW, (int(bank_point[0]), int(bank_point[1])), current_pocket, line_thickness)
+                # رصد نقطة الارتداد على الجدار بنقطة Cyan صغيرة ومضيئة
+                pygame.gfxdraw.filled_circle(screen, int(bank_point[0]), int(bank_point[1]), 4, CYAN)
 
     # ==========================================
-    # 🖼️ 10. Rendering Advanced Control GUI Panel
+    # 🖼️ 10. Rendering Pro Control GUI Panel
     # ==========================================
     pygame.draw.rect(screen, GUI_BG, (gui_x, gui_y, gui_w, gui_h), border_radius=8)
     pygame.draw.rect(screen, CYAN, (gui_x, gui_y, gui_w, gui_h), 1, border_radius=8)  
     pygame.draw.line(screen, CYAN, (gui_x, gui_y + 30), (gui_x + gui_w, gui_y + 30), 1) 
 
-    screen.blit(gui_title_font.render("🎱 8BP PRO CONTROL PANEL", True, CYAN), (gui_x + 15, gui_y + 6))
+    screen.blit(gui_title_font.render("🎱 8BP CLEAN PRO PANEL", True, CYAN), (gui_x + 15, gui_y + 6))
 
     for idx, p_val in enumerate([50, 75, 100]):
         btn_x = gui_x + 15 + (idx * 70)
@@ -554,9 +466,7 @@ while running:
         screen.blit(gui_font.render(f"{p_val}%", True, WHITE), (btn_x + 20, gui_y + 50))
 
     toggles = [
-        ("Auto Detect Cue", is_cue_detect_enabled, gui_y + 85),
-        ("3-Line Projection", is_3line_enabled, gui_y + 120),
-        ("Multi-Bank Predict", is_multibank_enabled, gui_y + 155)
+        ("3-Line Projection", is_3line_enabled, gui_y + 85),
     ]
     for label, state, t_y in toggles:
         state_color = GREEN if state else RED
@@ -566,18 +476,18 @@ while running:
         screen.blit(gui_font.render(label, True, WHITE), (gui_x + 22, t_y + 5))
         screen.blit(gui_font.render(state_txt, True, WHITE), (gui_x + 193, t_y + 5))
 
-    pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 200, 210, 25), border_radius=4)
-    screen.blit(gui_font.render(f"Line Thickness: {line_thickness}", True, WHITE), (gui_x + 22, gui_y + 205))
-    pygame.draw.rect(screen, CYAN, (gui_x + 140, gui_y + 202, 35, 21), border_radius=3)
-    pygame.draw.rect(screen, CYAN, (gui_x + 185, gui_y + 202, 35, 21), border_radius=3)
-    screen.blit(gui_font.render("-", True, BLACK), (gui_x + 154, gui_y + 204))
-    screen.blit(gui_font.render("+", True, BLACK), (gui_x + 198, gui_y + 204))
+    pygame.draw.rect(screen, GUI_INACTIVE_COLOR, (gui_x + 15, gui_y + 125, 210, 25), border_radius=4)
+    screen.blit(gui_font.render(f"Line Thickness: {line_thickness}", True, WHITE), (gui_x + 22, gui_y + 130))
+    pygame.draw.rect(screen, CYAN, (gui_x + 140, gui_y + 127, 35, 21), border_radius=3)
+    pygame.draw.rect(screen, CYAN, (gui_x + 185, gui_y + 127, 35, 21), border_radius=3)
+    screen.blit(gui_font.render("-", True, BLACK), (gui_x + 154, gui_y + 129))
+    screen.blit(gui_font.render("+", True, BLACK), (gui_x + 198, gui_y + 129))
 
-    pygame.draw.rect(screen, (50, 150, 50), (gui_x + 15, gui_y + 250, 210, 28), border_radius=4)
-    screen.blit(gui_font.render("HIDE TOOL (Ctrl+H)", True, WHITE), (gui_x + 65, gui_y + 256))
+    pygame.draw.rect(screen, (50, 150, 50), (gui_x + 15, gui_y + 190, 210, 28), border_radius=4)
+    screen.blit(gui_font.render("HIDE TOOL (Ctrl+H)", True, WHITE), (gui_x + 65, gui_y + 196))
 
-    pygame.draw.rect(screen, (200, 50, 50), (gui_x + 15, gui_y + 290, 210, 28), border_radius=4)
-    screen.blit(gui_font.render("CLOSE TOOL (Ctrl+Q)", True, WHITE), (gui_x + 62, gui_y + 296))
+    pygame.draw.rect(screen, (200, 50, 50), (gui_x + 15, gui_y + 230, 210, 28), border_radius=4)
+    screen.blit(gui_font.render("CLOSE TOOL (Ctrl+Q)", True, WHITE), (gui_x + 62, gui_y + 236))
 
     pygame.display.update()
 
